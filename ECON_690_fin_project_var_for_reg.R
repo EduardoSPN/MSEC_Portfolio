@@ -16,14 +16,14 @@ head(days_rel)
 rel_1 <- rep(1, length(days_rel)) %>% as.data.frame() 
 colnames(rel_1) <- c("DATE", "REL")
 
-rel_1 <- cbind(data$ï..DATE, rel_1)
+rel_1 <- cbind(data$Ã¯..DATE, rel_1)
 
 
 data <- read.csv("SPY_nr.csv",header = TRUE)
 
 rel_2 <- rep(0, nrow(data)) %>% as.data.frame() 
 
-rel_2 <- cbind(data$ï..DATE, rel_2)
+rel_2 <- cbind(data$Ã¯..DATE, rel_2)
 
 colnames(rel_2) <- c("DATE", "REL")
 
