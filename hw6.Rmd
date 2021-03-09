@@ -1,0 +1,249 @@
+---
+title: "Homework 6"
+author: 'Ctrl Alt Elite: Morris Greenberg, Dror Shvadron, Eduardo Schiappa Pietra,
+  Tao Ni'
+date: "11/05/2019"
+output:
+  pdf_document: default
+  html_document:
+    keep_md: yes
+---
+
+### Setup
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(parallel)
+library(httr)
+library(rjson)
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE, comment = NA, message = FALSE,
+                      warning = FALSE)
+
+#devtools::install_github("hrbrmstr/darksky")
+library(darksky)
+```
+
+## Data Collection
+
+### Download train data
+
+Here, parallel computing is used to download the files more efficiently.
+
+```{r load_csv_files, cache=TRUE, message=F, warning=F}
+link_base <- "http://www2.stat.duke.edu/~sms185/data/bike/cbs_"
+cl <- makeCluster(4, 'PSOCK')
+clusterExport(cl, varlist=c("link_base"))
+clusterEvalQ(cl, library(tidyverse))
+bike_datasets <- parLapply(cl, 2013:2017, function(i){
+  dataset <- read_csv(paste0(link_base, i, ".csv"))
+  Sys.sleep(abs(rnorm(1)))
+  return(dataset)
+})
+stopCluster(cl)
+bike_df <- bind_rows(bike_datasets)
+```
+
+### Download Station data
+
+```{r stations}
+lat_lon_url <- "https://layer.bicyclesharing.net/map/v1/wdc/map-inventory"
+inventory_page <- GET(lat_lon_url)
+json <- fromJSON(content(inventory_page, type="text", 
+                         encoding = "ISO-8859-1"))
+geometry <- map(json$features, `[[`, "geometry")
+coords <- map(geometry, `[[`, "coordinates")
+coords_df <- data.frame(lon = sapply(coords, `[`, 1),
+                        lat = sapply(coords, `[`, 2))
+properties <- map(json$features, `[[`, "properties")
+props_df <- map_df(map(properties, `[[`, "station"), `[`,
+                   c("id", "name", "terminal", "installed",
+                     "capacity", "renting", "returning"))
+inventory_df <- bind_cols(coords_df, props_df) %>%
+  mutate(terminal = as.numeric(terminal))
+inventory_df$id <- as.integer(inventory_df$id)
+#saveRDS(inventory_df, file = "data/inventory.Rds")
+```
+
+### Prep train data
+
+```{r translate_lat_lon}
+bike_df2 <- left_join(bike_df, inventory_df, 
+                      by=c("Start station number"="terminal")) 
+
+bike_df2 <- bike_df2 %>% 
+  left_join(inventory_df, by=c("End station number"="terminal"),
+            suffix=c("_start", "_end"))
+```
+
+### Save train data
+
+```{r save df, eval = F}
+dir.create(file.path("data"), showWarnings = FALSE)
+#saveRDS(bike_df2, file = "data/bike_df2.Rds")
+```
+
+### Download test data
+
+```{r test data}
+dir.create(file.path("data"), showWarnings = FALSE)
+download.file("http://www2.stat.duke.edu/~sms185/data/bike/cbs_test.csv",
+              destfile = "data/cbs_test.csv")
+test_df <- read_csv("data/cbs_test.csv")
+```
+
+### Weather data
+
+Weather data is downloaded using the Dark Sky R wrapper package.
+Once downloaded using the API, it is saved on our local storage.
+
+```{r weather data}
+#devtools::install_github("hrbrmstr/darksky")
+library(darksky)
+
+DC_lat <- 38.892059 #https://www.latlong.net/
+DC_lon <- -77.019913
+
+# historic data NOT RUN
+if (FALSE) {
+  weather_dates <- seq(as.Date("2013-01-01"), as.Date("2019-01-01"), by="days")
+  
+  weather1 <- weather_dates[1:1000]
+  weather1_data <- map(.x = weather1, 
+                       .f = function(x) get_forecast_for(latitude = DC_lat, longitude = DC_lon, x))
+  saveRDS(weather1_data, file = "data/weather1.Rds")
+  
+  darksky_api_key(force = T)  
+  weather2 <- weather_dates[1001:2000]
+  weather2_data <- map(.x = weather2, 
+                       .f = function(x) get_forecast_for(latitude = DC_lat, longitude = DC_lon, x))
+  saveRDS(weather2_data, file = "data/weather2.Rds")
+  
+  darksky_api_key(force = T)  
+  weather3 <- weather_dates[2001:2192]
+  weather3_data <- map(.x = weather3, 
+                       .f = function(x) get_forecast_for(latitude = DC_lat, longitude = DC_lon, x))
+  saveRDS(weather3_data, file = "data/weather3.Rds")
+  
+  weather_data <- c(weather1_data, weather2_data, weather3_data)
+  saveRDS(weather_data, file = "github_data/weather_data.Rds")
+}
+
+# turn to dataframe - hourly
+weather_data <- readRDS("github_data/weather_data.Rds")
+weather_hr_df <- map_df(weather_data, `[[`, "hourly")
+weather_day_df <- map_df(weather_data, `[[`, "daily")
+weather_cur_df <- map_df(weather_data, `[[`, "currently")
+```
+
+## Prepare Data
+
+### Calculate Shortest distance between Stations
+
+Geographic distance is calculated between any two stations
+
+```{r station distance}
+library(geosphere)
+
+dist_df <- crossing(inventory_df %>% 
+                      select(start_id = id, start_lat = lat, start_lon = lon), 
+                    inventory_df %>% 
+                      select(end_id = id, end_lat = lat, end_lon = lon))
+
+dist_df <- dist_df %>% 
+  rowwise %>% 
+  mutate(dist = distGeo(c(start_lat, start_lon), c(end_lat, end_lon))) #in meters
+
+saveRDS(dist_df, file = "data/dist_df.Rds")
+```
+
+### Simple Probabilistic Model
+
+We experimented with different models, starting with a nearest neighbor model that matches to each ride in the test data the destination with the closest mean duration from the train data. That model gave one destination a probability of one and zeroes to the rest. We then tried more advanced models, including multinomial penalized regressions for each starting point. Due to computational problems and time pressure, we couldn't persue these models further.
+
+We ended up with a simple probabilistic model that matches all the possible train data rides to each test data ride, and then filters out the matches where the delta between the durations is greater than some predefined value. We set that value to 180 (3 minutes). Then, for each ride in the test data, we calculated probabilities for destinations based on the distribution of matched training rides. 
+
+Lastly, we transformed the results back into the required format to upload to the leaderboard.
+
+```{r model}
+# load data
+#bike_df2 <- readRDS(file = "data/bike_df2.Rds")
+#test_df <- read_csv("data/cbs_test.csv")
+#inventory_df <- readRDS("data/inventory.Rds")
+
+#data prep
+test_rides <-  test_df %>% 
+  select(start_station_number, test_duration = duration) %>% 
+  mutate(test_ride_id = row_number())
+
+train_rides <- bike_df2 %>% 
+  select(start_station_number = `Start station number`, 
+         train_duration = Duration, 
+         end_station_number = `End station number`)
+
+# for each test ride, match all training rides from the same station
+merged_rides <- test_rides %>% left_join(train_rides)
+
+# keep only the matches where the duration delta is smaller than 3m
+merged_rides <- merged_rides %>% 
+  filter(abs(train_duration - test_duration) < 180)
+
+# calc probabilities for each test ride destination 
+# based on distribution of train rides
+merged_rides <- merged_rides %>% 
+  group_by(test_ride_id) %>% 
+  mutate(dest_count = n()) %>% 
+  group_by(test_ride_id, end_station_number) %>% 
+  mutate(prob = n()/dest_count) %>% 
+  ungroup
+
+# keep distinct probabilities
+dest_probs <- merged_rides %>% 
+  select(test_ride_id, end_station_number, prob) %>% 
+  distinct()
+
+```
+
+
+## Create test file
+
+```{r}
+# pivot to long for easier manipulation
+test_df2 <- test_df %>% mutate(test_ride_id = row_number()) %>% 
+  pivot_longer(-c(test_ride_id, start_date, end_date, duration, 
+                  start_station_number, start_station, bike_number, member_type),
+               names_to = "end_station_name",
+               values_to = "probability") # DONT MESS WITH THE ORDER OF THIS
+
+test_df2 <- inventory_df %>% 
+  select(end_station_name = name, end_station_number = terminal) %>% 
+  right_join(test_df2)
+
+#adjust probability values
+test_df2 <- test_df2 %>% 
+  select(-probability) %>% # delete old probability
+  left_join(dest_probs, by = c("end_station_number", "test_ride_id")) %>% 
+  mutate(prob = replace_na(prob, 0)) 
+
+
+# pivot back to wide # VERY SLOW FOR SOME ANNOYING REASON
+# test_df3 <- test_df2 %>% 
+#   pivot_wider(names_from = end_station_name,
+#               values_from = probability) %>% 
+#   select(-ride_id)
+
+# alternative
+temp <- matrix(test_df2$prob, ncol = 488, byrow = T)
+test_df_out <- test_df
+test_df_out[,8:495] <- temp
+```
+
+### Export prediction
+
+```{r}
+dir.create(file.path("out"), showWarnings = FALSE)
+write_csv(test_df_out, "out/cbs_ctrl-alt-elite.csv")
+```
+
+
+

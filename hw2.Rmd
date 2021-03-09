@@ -1,0 +1,280 @@
+---
+title: "Homework 2"
+author: |
+  | **Group Leopard**
+  | George Linder
+  | Eduardo Schiappa Pietra
+  | Vidvat Ramachandran
+  | Dror Shvadron
+date: "9/19/2019"
+output:
+  pdf_document: default
+  keep_md: yes
+  html_document: null
+---
+  
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA)
+library(ggplot2)
+```
+
+## Task 2
+
+The class we are creating is called Sdata. The class acts like a very simple database.  
+Sdata keeps the measurements(`x`) from 3 types of populations(pop attribute). The measurements are of type `double` while the population types are of type `integer`. Unlike levels in factors the population types are predefined, they can be 1,2 or 3, while the measurement can be any real value.  
+The purpose of the class is to keep the populations separate when working on an object, for example, the mean(described below) of an Sdata object will return a Sdata object with the means of types of each of the populations.
+
+The constructor checks for the data types and creates the variable of class Sdata.
+
+```{r Constructor}
+new_Sdata <- function(x = double(), pop = integer()){
+  
+  stopifnot(is.double(x))
+  stopifnot(is.integer(pop))
+  
+  structure(
+    x, 
+    population = pop, 
+    class = "Sdata"
+  )
+  
+}
+```
+
+The validator checks that each value has a population type with it, i.e., checks that the number of measurements is equal to the length of the population vector. Then it checks if the population types are valid - 1,2,3. 
+
+```{r Validator} 
+validate_Sdata <- function(x){
+  
+  values <- unclass(x)
+  pop <- attr(x, "population")
+  
+  # Each data point must have the population type with it
+  if( length(pop) != length(values) ){    
+    stop(
+      "Number of population types must be the same as number of data points",
+      call.=FALSE
+    )
+  }
+  
+  # The population type should be 1,2 or 3
+  if( !any( pop %in% 1:3) ){
+    stop(
+      "Population types must be 1,2 or 3", 
+      call.=FALSE
+    )
+  }  
+  return(x)
+}
+```
+
+The helper function does two things:  
+1. It coerces the arguments into `double` and `integer`.  
+2. In case the user only wants to enter data from one population, it doesn't make sense to repeat the population type in the arguments, so the helper function does that. The user only needs to enter the population type once and the helper then repeats it so that the lengths of pop and the values match.
+
+Before it can do the above, it checks for the inputs to be numeric as we cannot/should not coerce non-numeric inputs. Then it checks if the values input for pop are integers or not using mod.
+
+```{r Helper}
+Sdata <- function(x = double(), pop = integer()){
+  
+  if( !( all(is.numeric(x)) & all(is.numeric(pop) ) ) ){
+    stop(
+      "The inputs should be numeric",
+      call.=FALSE
+    )
+  }
+  
+  # Coerce x to double
+  x <- as.double(x)
+  
+  # The population type should be an integer
+  if( any(pop%%1 != 0 | is.infinite(pop)) ){
+    stop(
+      "Population must be 1,2 or 3", 
+      call.=FALSE
+      )
+  }  
+  
+  pop <- as.integer(pop)
+  
+  # Do not need to repeat the population type in input if entering for only 1 type
+  if( length(pop) == 1){
+    pop <- rep(pop, length(x))
+  }
+  
+  validate_Sdata( new_Sdata(x, pop) )  
+}
+```
+
+
+#### Method for mean
+
+The mean amd median methods calculate the mean and median for each population type and returns a list with the either the means or medians and the populations.
+
+```{r Mean}
+#Mean function
+mean.Sdata <- function(x){
+  
+  vals <- unclass(x)
+  pops <- attr(x, "population")
+  pop_uniq <- sort( unique(pops) ) 
+  
+  m1 <- mean(vals[ pops == 1 ])
+  m2 <- mean(vals[ pops == 2 ])
+  m3 <- mean(vals[ pops == 3 ])
+  
+  means <- c(m1,m2,m3)
+  means <- means[!is.na(means)]
+  
+  return(list(mean = means,population = pop_uniq))
+}
+```
+
+#### Method for median
+
+```{r Median}
+median.Sdata <- function(x) {
+  vals <- unclass(x)
+  pops <- attr(x, "population")
+  pop_uniq <- sort( unique(pops) ) 
+  
+  med1 <- median(vals[ pops == 1 ])
+  med2 <- median(vals[ pops == 2 ])
+  med3 <- median(vals[ pops == 3 ])
+  
+  med <- c(med1,med2,med3)
+  med <- med[!is.na(med)]
+  
+  return(list(median = med,population = pop_uniq))
+}
+```
+
+##### Testing
+
+```{r Testing class and methods with valid inputs}
+
+s1 <- Sdata(c(1.1,2.2,-6,5),2)
+mean(s1)
+median(s1)
+
+s2 <- Sdata(c(2,6,-7,-8,1,5,7),c(1,2,2,1,3,1,2))
+mean(s2)
+median(s2)
+
+s3 <- Sdata(c(5:20),3)
+mean(s3)
+median(s3)
+
+s4 <- Sdata(c(0,0,0,0,0),c(3,3,1,1,1))
+mean(s4)
+median(s4)
+```
+
+```{r Testing class and methods with invalid inputs, error=T}
+
+f1 <- Sdata(3,6)
+mean(f1)
+median(f1)
+  
+f2 <-Sdata(c(1,2,"Hello",2))
+mean(f2)
+median(f2)
+  
+h<-factor(c(1,2,3,4), levels = c("a","b","c","d"))
+f3 <- Sdata(h,1)
+mean(f3)
+median(f3)
+```
+
+
+## Task 3
+
+```{r is.armstrong}
+
+#generic
+is.armstrong <- function(x) {
+  UseMethod("is.armstrong")
+}
+
+
+#methods
+is.armstrong.integer <- function(x) {
+  
+  # Error checks
+  if(any(is.na(x))|any(is.infinite(x))|any(is.nan(x)))  
+    stop("Input has missing values", call. = FALSE)
+  if ( any(x<1) | any(x>999) ) 
+    stop("Input is not between 1 and 999", call. = FALSE)
+  
+  #armstrong calculation
+  ret <- sapply(strsplit(as.character(x), ""), 
+            FUN = function(xi) sum(as.numeric(xi)^length(xi)))==x
+  
+  return(ret)
+}
+
+
+is.armstrong.double <- function(x) {
+  
+  # Error checks
+  if(any(is.na(x))|any(is.infinite(x))|any(is.nan(x)))
+    stop("Input has missing/inf/nan values", call. = FALSE)
+  if( any( !((x %% 1) == 0) ) )
+    stop("Input is not an integer", call. = FALSE)
+  
+  # Conversion to integer and call to integer method for is.armstrong
+  x <- as.integer(x)
+  ret <- is.armstrong(x)
+  
+  return(ret)
+}
+
+
+is.armstrong.default <- function(x){
+  stop("Please enter a vector of numbers", call. = FALSE)
+}
+  
+```
+
+#### Valid inputs
+
+```{r Testing valid inputs, error=TRUE}
+is.armstrong(x = 12)
+is.armstrong(x = 153)
+is.armstrong(x = 154)
+is.armstrong(x = c(153, 154))
+is.armstrong(x = 1:999)
+is.armstrong(x = 30.555 + 122.445)    # checking for arithmetic with doubles
+is.armstrong(x = c(30.555,399.999) + c(122.445,7.001))  
+is.armstrong(x = 153/9 + 8*153/9)
+is.armstrong(999 + (.4 -.1) - 0.3)
+is.armstrong(array(c(1,2,3,4,5,6,154,153), dim = c(2,2,2)))    # matrices are valid 
+```
+
+#### Invalid inputs
+
+```{r Testing invalid inputs, error=TRUE}
+is.armstrong(x = -2)
+is.armstrong(x = 1011)
+is.armstrong(x = c(pi, 6))
+is.armstrong(x = "a")
+is.armstrong(c(2.5, 4))
+is.armstrong(x = TRUE)
+is.armstrong(x = '1')
+is.armstrong(NaN)
+is.armstrong(array(c(1,2,3,4,5,NA,154,153), dim = c(2,2,2)))
+is.armstrong(data.frame(x = 6:10, y = 1:5))  # doesn't work with dataframes
+is.armstrong(list(1,2,44))      # doesn't work with lists
+is.armstrong(Inf)
+```
+
+**Approach**:  
+We created a generic first and then methods for is.armstrong. The methods are created for integers and doubles.
+In error checking - checked for missing values(NA,NaN), accepted only numeric values, i.e , double or integers, checked if numbers are in range and checked if the numbers are integers or not. If a vector has an invalid element, the vector is not processed.
+
+**Concerns**:  
+The function accepts matrices and returns a vector. This is concerning if the function is not supposed to accept anything other than atomic vectors.
+The function does not work with dataframes and lists and potentially other variables which are not atomic vectors but returns errors which are different than what we might want to return as we are not checking for this.  
+For each condition, separate `if` statements are used.  
+Extensive testing is not done for each possible variable type.  

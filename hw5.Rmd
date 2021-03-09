@@ -1,0 +1,116 @@
+---
+title: "Homework 5"
+author: 'Galaxy: Eduardo Pietra, Mingxuan Yang, Alicia Zhou, Quinn Frank'
+date: "10/17/2019"
+output:
+  html_document:
+    keep_md: yes
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA, message = FALSE,
+                      warning = FALSE)
+```
+
+## Packages
+
+```{r packages}
+library(tidyverse)
+library(geosphere)
+library(ggplot2)
+library(maps)
+```
+
+## Task 1
+
+We used the `httr` package to scrape the Wawa data.  For each of the possible store codes (those between 00000-01000 and 08000-09000), we sent an http request to the corresponding URL via the `GET` function, sleeping briefly between requests.  This returned a response object, from which we could access the http status code (if the status was 200, we knew the query was successful, and the body of the request contained valid JSON data).  Each valid response object was then stored as an RDS file in the `data/wawa` directory.
+
+The `parse_wawa.R` script loaded all these RDS files via a regular expression and then extracted the raw text in the body of the http response.  This was passed into `fromJSON` in the `jsonlite` package to convert each response into a nested list.  These were all flattened to a single layer and row-bound together to form a dataframe.  At this point, each store was in one row, but because the `fuelTypes` attribute was stored as a list, the flattening resulted in one column for each fuel type (with the name of the fuel as a value and NA otherwise) and one column for the price of each fuel type.  We just used a series of `spread` operations to pair these values together, such that each possible fuel type occupies one column (we also removed the information on the currency type for each price).  All the other data was left unchanged for Task 3: see below for the structure of the final dataframe.
+
+```{r task 1}
+wawa_df <- readRDS("data/wawa/wawa.rds")
+head(wawa_df)
+```
+
+
+## Task 2
+
+We used the `rvest` package to scrape the Sheetz data.  The JSON data here was stored as plaintext on several different html webpages.  So, we downloaded the html of the base webpage on the server and used a css selector to find all nodes with hyperlinks (those with an "href" attribute).  After extracting the links themselves from these attributes, we noticed some of these links were not relevant (like the "Back" and "Home" button).  As a result, we used a regular expression to find the links with "Page=" in the URL, since all the valid "region" links contained this pattern.  We used `read_html` again on each valid link, and simply extracted the text stored in each page's "body" node.  The text for each region was stored as an RDS file in the `data/sheetz` directory.
+
+The `parse_sheetz.R` script loaded these RDS files and passed the text from each into `fromJSON` to convert to a dataframe, one for each "region".  These dataframes were very untidy, so the tidying operations we did had to be applied to each dataframe individually before they could be bound together.  First, we iterated through the columns which contained atomic values, changed the NULL values to NA and made sure to coerce each value to a scalar (as a consequence of the parser we used, most of these values were stored as 1x1 matrices for some reason).  The `storeAttributes` column was actually a dataframe of the same height -- this was just cleaned in the same way and then added on to the main dataframe with `cbind`.  The `fuelPrice` column contained one dataframe for each store (where each row of that sub-dataframe encoded a type of fuel and its price).  Each sub-dataframe was converted to a single row via `spread`, and they were all row-bound together and similarly cleaned/column-bound to the main dataframe.  The original `storeAttributes`/`fuelPrice` columns were removed, but all the other data was left unchanged.  Again, see below for the structure of the parsed dataframe.
+
+```{r task 2}
+sheetz_df <- readRDS("data/sheetz/sheetz.rds")
+head(sheetz_df)
+```
+
+## Task 3
+
+```{r task 3, fig.height = 9, fig.width = 11}
+# data frame of the points on the map
+wawa_sub <- wawa_df %>% 
+  select(addresses.loc1, addresses.loc2) %>% 
+  mutate(station = "Wawa")
+sheetz_sub <- sheetz_df %>% 
+  select(latitude, longitude) %>% 
+  mutate(station = "Sheetz")
+colnames(wawa_sub)[1] <- "latitude"
+colnames(wawa_sub)[2] <- "longitude"
+station_loc <- rbind(wawa_sub, sheetz_sub)
+station_loc$latitude <- as.numeric(station_loc$latitude)
+station_loc$longitude <- as.numeric(station_loc$longitude)
+
+# map data
+county_data <- map_data("county") %>% 
+  filter(region == "pennsylvania" | region == "new jersey" |
+           region == "maryland" | region == "delaware")
+
+# cut-off line
+## divide the map space
+val_1 <- seq(range(county_data$lat)[1], range(county_data$lat)[2], length.out = 100)
+val_2 <- seq(range(county_data$long)[1], range(county_data$long)[2], length.out = 100)
+val <- expand.grid(latitude = val_1, longitude = val_2)
+
+## assign values for each point
+### function to get the number of wawa in the nearest 10 points
+wawa_point <- function(x){
+  distance <- distHaversine(x, station_loc[,1:2])
+  stat <- station_loc[which(distance %in% sort(distance)[1:10]),]$station
+  return(-1+2/10*sum(stat=="Wawa"))
+}
+
+### assign values
+val[,3] <- apply(val,1,wawa_point)
+colnames(val)[3] <- "value"
+
+## merge the station_loc values with val
+station_loc$value <- ifelse(station_loc$station == "Wawa", 1, -1)
+df <- rbind(val, station_loc %>% select(latitude, longitude, value))
+
+## data set to fit the cut-off line
+df_1 <- df %>% filter(value==0) %>% select(longitude,latitude)
+
+# label data
+names <- aggregate(cbind(long, lat) ~ subregion, data=county_data, FUN=mean) %>% 
+  filter(subregion == "berks" | subregion == "lehigh" | 
+           subregion == "northampton" | subregion == "lancaster")
+
+# plot
+ggplot() + 
+  geom_map(data = county_data, map = county_data, 
+           aes(x = long, y = lat, group = group, map_id = region),
+           fill = "white", colour = "black", size = 0.5) + 
+  geom_point(data = station_loc, aes(x = longitude, y = latitude, fill = station), shape = 21, size = 3) +
+  geom_smooth(data = df_1, aes(x = longitude, y = latitude), se = FALSE) +
+  geom_text(data = names, aes(long, lat, label = subregion), size=3) +
+  theme_void()
+```
+
+Our visualization is based on map plot. Since all Wawa and Sheetz stations are located in Pennsylvania, New Jersey, Maryland and Delaware, our map can consist of the county plots of only these 4 states.
+
+The rivalry between the 2 companies can be represented by the respective number of stations in each county. In our plot, we use red points to represent Sheetz stations and blue points to represent Wawa. In general, these 2 kinds of points seperate well, but at the middle of the map there are some intersections. We can use a reasonably defined line to separate Sheetz and Wawa.
+
+In our plot, the cut-off line is produced based on k-nearest neighbors algorithm. We define the value of Wawa as 1 and the value of Sheetz as -1. For each point on the map, its value depends on the number of Wawa stations in its nearest 10 stations. With more Wawa stations nearby, its value will be closer to 1. As for the measure of distance, we use orthodromic distance. With the subset of value equal to 0, we can fit a line that separates the Sheetz and Wawa stations, which is shown as the blue line in our plot.
+
+With the help of the map plot, we can answer the questions now. The fuel turf war converges to the blue cut-off line. These two stations are not completely separable. In county lancaster, berks, lehign and northampton, both Wawa stations and Sheetz stations exist.

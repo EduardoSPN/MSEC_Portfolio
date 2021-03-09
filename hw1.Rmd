@@ -1,0 +1,62 @@
+---
+title: "Homework 1"
+author: 'Eduardo Schiappa Pietra'
+date: "9/03/2019"
+output: 
+  html_document:
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA)
+```
+
+## Task 1
+Parts of the function
+  Line 23:     Satisfy Restrictions 
+  Lines 24-27: Auxiliary expressions (decompose integer into its digits)
+  Line 28:     Output result (logical atomic vector)
+  
+```{r Task 1 - Is Armstrong?}
+
+is.armstrong <- function(x) {
+  stopifnot(x>=0,x<=999,(x-as.integer(x)==0))
+  len<-nchar(as.integer(x))
+  ones<-((x%%10^(len-1))%%10^(len-2))
+  tens<-((x%%10^(len-1))-ones)/10
+  hundreds<-(x%%10^(len)-ones - tens*10)/100
+  (hundreds^len + tens^len + ones^len == x)
+}
+```
+
+
+## Task 2
+
+#### Valid inputs
+
+```{r Task 2 - Validation}
+is.armstrong(x = 1)
+is.armstrong(x = 153)
+is.armstrong(x = 154)
+is.armstrong(x = c(153, 154))
+is.armstrong(x = 1:999)
+is.armstrong(x = 407)
+```
+
+#### Invalid inputs
+
+```{r Task 2 - Validation, error=TRUE}
+is.armstrong(x = -2)
+is.armstrong(x = 1011)
+is.armstrong(x = c(pi, 6))
+is.armstrong(x = "a")
+is.armstrong(x = 54748)
+```
+## Task 3 - Describe approach to the problem
+
+-It's robust since we have tested it with multiple examples that we know would throw TRUE (FALSE) and also with examples we know would throw an error.
+
+-Weaknesses: It could be shorter. In particular, the procedure to decompose a number in its digits should be simpler (haven't found the way though).
+
+-I decided to put the "stopifnot" command at the beginning of the function in order to spare the useless calculation of part b) (getting the individual digits) when the restrictions are not met. I found no need to use if statements.
+
